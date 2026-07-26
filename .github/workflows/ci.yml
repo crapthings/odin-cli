@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: crapthings/odin-rdf
+          ref: eac24a8d3251d03cb3fe700e6ffbda0ad1a47ee4 # v0.33.0
+          path: odin-rdf
+          persist-credentials: false
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: crapthings/odin-shacl
+          ref: 4ee8249b84380e4ef1d888bd94f8cd24d6e7b985 # v0.1.0
+          path: odin-shacl
+          persist-credentials: false
+      - uses: laytan/setup-odin@8536d8fa450ec6f1bd9ddc84bbaaf16296c0051d # v2.12.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - run: odin test cmd/odin -collection:odin-rdf=odin-rdf -collection:odin-shacl=odin-shacl
+
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: crapthings/odin-rdf
+          ref: eac24a8d3251d03cb3fe700e6ffbda0ad1a47ee4 # v0.33.0
+          path: odin-rdf
+          persist-credentials: false
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: crapthings/odin-shacl
+          ref: 4ee8249b84380e4ef1d888bd94f8cd24d6e7b985 # v0.1.0
+          path: odin-shacl
+          persist-credentials: false
+      - uses: laytan/setup-odin@8536d8fa450ec6f1bd9ddc84bbaaf16296c0051d # v2.12.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - run: odin check cmd/odin -collection:odin-rdf=odin-rdf -collection:odin-shacl=odin-shacl -vet -warnings-as-errors
+      - run: odin test cmd/odin -collection:odin-rdf=odin-rdf -collection:odin-shacl=odin-shacl -sanitize:address
