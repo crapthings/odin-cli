@@ -5,8 +5,8 @@ import "core:testing"
 import rdf "odin-rdf:rdf"
 import validator "odin-shacl:shacl"
 
-GARDEN_DATA   :: "../odin-garden/fixtures/shacl-core/person-record/data.ttl"
-GARDEN_SHAPES :: "../odin-garden/fixtures/shacl-core/person-record/shapes.ttl"
+GARDEN_DATA   :: "cmd/odin/testdata/person-record/data.ttl"
+GARDEN_SHAPES :: "cmd/odin/testdata/person-record/shapes.ttl"
 
 @(test)
 test_parse_validate_args_requires_two_regular_local_paths :: proc(t: ^testing.T) {

@@ -1,0 +1,17 @@
+@prefix ex: <https://example.org/garden/shacl/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:ada rdf:type ex:Person ;
+  ex:email ex:mailboxAda ;
+  ex:employeeId "7"^^xsd:integer .
+
+ex:bea rdf:type ex:Person ;
+  ex:email "not-an-iri" ;
+  ex:employeeId "ID-2" .
+
+ex:Worker rdfs:subClassOf ex:Person .
+
+ex:cora rdf:type ex:Worker ;
+  ex:employeeId "8"^^xsd:integer, "9"^^xsd:integer .
