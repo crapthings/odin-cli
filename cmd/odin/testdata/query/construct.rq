@@ -1,0 +1,7 @@
+CONSTRUCT {
+  <urn:ada> <urn:relatedTo> ?friend
+}
+WHERE {
+  <urn:ada> <urn:knows> ?friend
+}
+ORDER BY ?friend
