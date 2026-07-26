@@ -1,0 +1,2 @@
+<urn:ada> <urn:knows> <urn:bert> .
+<urn:ada> <urn:knows> <urn:cora> .

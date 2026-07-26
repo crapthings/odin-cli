@@ -15,10 +15,13 @@ import validator "odin-shacl:shacl"
 DEFAULT_MAX_TRIPLES         :: 100_000
 DEFAULT_MAX_STATEMENT_BYTES :: 16 * 1024 * 1024
 DEFAULT_MAX_RESULTS         :: 10_000
+DEFAULT_MAX_QUERY_BYTES     :: 1024 * 1024
 
 Exit_Conforms   :: 0
 Exit_Violations :: 1
 Exit_Error      :: 2
+
+Command :: enum { Validate, Query }
 
 Command_Error_Code :: enum {
 	None,
@@ -28,10 +31,13 @@ Command_Error_Code :: enum {
 	Unknown_Option,
 	Missing_Data,
 	Missing_Shapes,
+	Missing_Query,
 	Duplicate_Data,
 	Duplicate_Shapes,
+	Duplicate_Query,
 	Invalid_Path,
 	Invalid_Limit,
+	Invalid_Format,
 }
 
 Command_Error :: struct {
@@ -40,12 +46,16 @@ Command_Error :: struct {
 }
 
 Options :: struct {
+	command:             Command,
 	data_path:           string,
 	shapes_path:         string,
+	query_path:          string,
 	max_data_triples:    int,
 	max_shapes_triples:  int,
 	max_statement_bytes: int,
 	max_results:         int,
+	max_query_bytes:     int,
+	format:              Query_Format,
 	help:                bool,
 }
 
@@ -73,10 +83,13 @@ error_message :: proc(code: Command_Error_Code) -> string {
 	case .Unknown_Option:       return "unknown option"
 	case .Missing_Data:         return "--data PATH is required"
 	case .Missing_Shapes:       return "--shapes PATH is required"
+	case .Missing_Query:        return "--query PATH is required"
 	case .Duplicate_Data:       return "--data may appear only once"
 	case .Duplicate_Shapes:     return "--shapes may appear only once"
-	case .Invalid_Path:         return "data and shapes must be regular local paths, not standard input"
+	case .Duplicate_Query:      return "--query may appear only once"
+	case .Invalid_Path:         return "input paths must be local files, not standard input"
 	case .Invalid_Limit:        return "limit must be a positive decimal integer"
+	case .Invalid_Format:       return "unsupported result format"
 	}
 	return "unknown command error"
 }
@@ -152,13 +165,19 @@ parse_args :: proc(args: []string) -> (Options, Command_Error) {
 		max_shapes_triples = DEFAULT_MAX_TRIPLES,
 		max_statement_bytes = DEFAULT_MAX_STATEMENT_BYTES,
 		max_results = DEFAULT_MAX_RESULTS,
+		max_query_bytes = DEFAULT_MAX_QUERY_BYTES,
+		format = .Auto,
 	}
 	if len(args) == 0 do return options, Command_Error{code = .Missing_Command}
 	if args[0] == "--help" || args[0] == "-h" {
 		options.help = true
 		return options, {}
 	}
-	if args[0] != "validate" do return options, Command_Error{code = .Unknown_Command, value = args[0]}
+	switch args[0] {
+	case "validate": options.command = .Validate
+	case "query":    options.command = .Query
+	case: return options, Command_Error{code = .Unknown_Command, value = args[0]}
+	}
 	for index := 1; index < len(args); index += 1 {
 		argument := args[index]
 		if argument == "--help" || argument == "-h" {
@@ -167,7 +186,7 @@ parse_args :: proc(args: []string) -> (Options, Command_Error) {
 		}
 		value: string
 		has_value := false
-		if argument == "--data" || argument == "--shapes" || argument == "--max-data-triples" || argument == "--max-shapes-triples" || argument == "--max-statement-bytes" || argument == "--max-results" {
+		if argument == "--data" || argument == "--shapes" || argument == "--query" || argument == "--format" || argument == "--max-data-triples" || argument == "--max-shapes-triples" || argument == "--max-statement-bytes" || argument == "--max-results" || argument == "--max-query-bytes" {
 			if index + 1 >= len(args) do return options, Command_Error{code = .Missing_Option_Value, value = argument}
 			index += 1
 			value, has_value = args[index], true
@@ -179,9 +198,25 @@ parse_args :: proc(args: []string) -> (Options, Command_Error) {
 			continue
 		}
 		if argument == "--shapes" || strings.has_prefix(argument, "--shapes=") {
+			if options.command != .Validate do return options, Command_Error{code = .Unknown_Option, value = argument}
 			if !has_value do value = argument[len("--shapes="):]
 			if len(options.shapes_path) > 0 do return options, Command_Error{code = .Duplicate_Shapes}
 			options.shapes_path = value
+			continue
+		}
+		if argument == "--query" || strings.has_prefix(argument, "--query=") {
+			if options.command != .Query do return options, Command_Error{code = .Unknown_Option, value = argument}
+			if !has_value do value = argument[len("--query="):]
+			if len(options.query_path) > 0 do return options, Command_Error{code = .Duplicate_Query}
+			options.query_path = value
+			continue
+		}
+		if argument == "--format" || strings.has_prefix(argument, "--format=") {
+			if options.command != .Query do return options, Command_Error{code = .Unknown_Option, value = argument}
+			if !has_value do value = argument[len("--format="):]
+			format, valid := parse_query_format(value)
+			if !valid do return options, Command_Error{code = .Invalid_Format, value = value}
+			options.format = format
 			continue
 		}
 		if argument == "--max-data-triples" || strings.has_prefix(argument, "--max-data-triples=") {
@@ -192,6 +227,7 @@ parse_args :: proc(args: []string) -> (Options, Command_Error) {
 			continue
 		}
 		if argument == "--max-shapes-triples" || strings.has_prefix(argument, "--max-shapes-triples=") {
+			if options.command != .Validate do return options, Command_Error{code = .Unknown_Option, value = argument}
 			if !has_value do value = argument[len("--max-shapes-triples="):]
 			parsed, valid := parse_positive_decimal(value)
 			if !valid do return options, Command_Error{code = .Invalid_Limit, value = value}
@@ -212,12 +248,21 @@ parse_args :: proc(args: []string) -> (Options, Command_Error) {
 			options.max_results = parsed
 			continue
 		}
+		if argument == "--max-query-bytes" || strings.has_prefix(argument, "--max-query-bytes=") {
+			if options.command != .Query do return options, Command_Error{code = .Unknown_Option, value = argument}
+			if !has_value do value = argument[len("--max-query-bytes="):]
+			parsed, valid := parse_positive_decimal(value)
+			if !valid do return options, Command_Error{code = .Invalid_Limit, value = value}
+			options.max_query_bytes = parsed
+			continue
+		}
 		return options, Command_Error{code = .Unknown_Option, value = argument}
 	}
 	if options.help do return options, {}
 	if len(options.data_path) == 0 do return options, Command_Error{code = .Missing_Data}
-	if len(options.shapes_path) == 0 do return options, Command_Error{code = .Missing_Shapes}
-	if options.data_path == "-" || options.shapes_path == "-" do return options, Command_Error{code = .Invalid_Path}
+	if options.command == .Validate && len(options.shapes_path) == 0 do return options, Command_Error{code = .Missing_Shapes}
+	if options.command == .Query && len(options.query_path) == 0 do return options, Command_Error{code = .Missing_Query}
+	if options.data_path == "-" || options.shapes_path == "-" || options.query_path == "-" do return options, Command_Error{code = .Invalid_Path}
 	return options, {}
 }
 
@@ -360,12 +405,20 @@ run_validate :: proc(options: Options, builder: ^strings.Builder) -> (exit_code:
 print_help :: proc() {
 	fmt.println(`Usage:
   odin validate --data DATA.ttl --shapes SHAPES.ttl [--max-data-triples N] [--max-shapes-triples N] [--max-statement-bytes N] [--max-results N]
+  odin query --data DATA.ttl --query QUERY.rq [--format auto|json|xml|csv|tsv|nt|turtle] [--max-data-triples N] [--max-statement-bytes N] [--max-query-bytes N] [--max-results N]
 
 Validate two local Turtle files using the released bounded SHACL Core profile.
 Standard output is one deterministic JSON report. Exit status is 0 when the
 data conforms, 1 when it has validation results, and 2 for command, file,
 Turtle, limit, shape-profile, or report errors. The command never opens a
-network connection, performs inference, or retains a graph after reporting.`)
+network connection, performs inference, or retains a graph after reporting.
+
+Query one local Turtle graph with one local SPARQL query document. The default
+format is SPARQL Results JSON for SELECT and ASK, and N-Triples for graph
+results. Exit status is 0 for a completed query, including an empty result, and
+2 for command, file, Turtle, query, limit, execution, or serialization errors.
+It never opens a network connection, executes a remote SERVICE, performs
+inference, or creates persistent storage.`)
 }
 
 main :: proc() {
@@ -383,9 +436,15 @@ main :: proc() {
 		os.exit(Exit_Error)
 	}
 	builder := strings.builder_make()
-	exit_code, detail := run_validate(options, &builder)
+	exit_code: int
+	detail: string
+	switch options.command {
+	case .Validate: exit_code, detail = run_validate(options, &builder)
+	case .Query:    exit_code, detail = run_query(options, &builder)
+	}
 	if exit_code == Exit_Error {
-		fmt.eprintfln("odin validate: %s", detail)
+		command_name := options.command == .Validate ? "validate" : "query"
+		fmt.eprintfln("odin %s: %s", command_name, detail)
 		os.exit(exit_code)
 	}
 	if _, write_error := io.write_string(os.to_writer(os.stdout), strings.to_string(builder)); write_error != .None {
